@@ -1,0 +1,56 @@
+@baseUrl = http://localhost:3000
+@sourceWalletId = replace-with-source-wallet-id
+@destinationWalletId = replace-with-destination-wallet-id
+
+### Create source customer
+POST {{baseUrl}}/customers
+Content-Type: application/json
+
+{
+  "name": "Ada Lovelace",
+  "email": "ada@example.com",
+  "currency": "USD"
+}
+
+### Create destination customer
+POST {{baseUrl}}/customers
+Content-Type: application/json
+
+{
+  "name": "Grace Hopper",
+  "email": "grace@example.com",
+  "currency": "USD"
+}
+
+### Deposit funds
+POST {{baseUrl}}/wallets/{{sourceWalletId}}/deposits
+Content-Type: application/json
+
+{
+  "amountMinorUnits": 5000,
+  "description": "Initial funding"
+}
+
+### Successful transfer
+POST {{baseUrl}}/transfers
+Content-Type: application/json
+
+{
+  "sourceWalletId": "{{sourceWalletId}}",
+  "destinationWalletId": "{{destinationWalletId}}",
+  "amountMinorUnits": 1250,
+  "description": "Lunch"
+}
+
+### Failed transfer: insufficient funds
+POST {{baseUrl}}/transfers
+Content-Type: application/json
+
+{
+  "sourceWalletId": "{{sourceWalletId}}",
+  "destinationWalletId": "{{destinationWalletId}}",
+  "amountMinorUnits": 999999
+}
+
+### List source wallet transactions
+GET {{baseUrl}}/wallets/{{sourceWalletId}}/transactions?page=1&limit=20
