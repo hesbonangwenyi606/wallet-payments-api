@@ -1,16 +1,3 @@
-import { HttpStatus, Injectable } from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, Repository } from "typeorm";
-import { PaginationQueryDto } from "../common/dto/pagination-query.dto";
-import { ApiException } from "../common/errors/api-exception";
-import { ErrorCode } from "../common/errors/error-code";
-import {
-  WalletTransaction,
-  WalletTransactionType,
-} from "../transfers/entities/wallet-transaction.entity";
-import { DepositFundsDto } from "./dto/deposit-funds.dto";
-import { Wallet } from "./entities/wallet.entity";
-
 @Injectable()
 export class WalletsService {
   constructor(
@@ -21,10 +8,13 @@ export class WalletsService {
     private readonly transactionsRepository: Repository<WalletTransaction>,
   ) {}
 
+  // Deposit money into a wallet (runs inside a DB transaction for safety)
   async deposit(walletId: string, dto: DepositFundsDto) {
     return this.dataSource.transaction(async (manager) => {
+      // find wallet first
       const wallet = await manager.findOne(Wallet, { where: { id: walletId } });
 
+      // stop if wallet doesn't exist
       if (!wallet) {
         throw new ApiException(
           HttpStatus.NOT_FOUND,
@@ -33,6 +23,7 @@ export class WalletsService {
         );
       }
 
+      // increase wallet balance
       await manager
         .createQueryBuilder()
         .update(Wallet)
@@ -42,6 +33,7 @@ export class WalletsService {
         .where("id = :walletId", { walletId, amount: dto.amountMinorUnits })
         .execute();
 
+      // record deposit transaction
       const transaction = await manager.save(
         manager.create(WalletTransaction, {
           type: WalletTransactionType.Deposit,
@@ -52,6 +44,8 @@ export class WalletsService {
           description: dto.description ?? null,
         }),
       );
+
+      // fetch updated wallet after deposit
       const updatedWallet = await manager.findOneByOrFail(Wallet, {
         id: walletId,
       });
@@ -60,7 +54,9 @@ export class WalletsService {
     });
   }
 
+  // Get wallet transactions with pagination
   async listTransactions(walletId: string, query: PaginationQueryDto) {
+    // check wallet exists first
     const walletExists = await this.walletsRepository.exists({
       where: { id: walletId },
     });
@@ -75,6 +71,8 @@ export class WalletsService {
 
     const page = query.page;
     const limit = query.limit;
+
+    // get transactions where wallet is either sender or receiver
     const [items, total] = await this.transactionsRepository
       .createQueryBuilder("transaction")
       .where("transaction.sourceWalletId = :walletId", { walletId })
@@ -84,6 +82,7 @@ export class WalletsService {
       .take(limit)
       .getManyAndCount();
 
+    // table structure (mainly for response formatting)
     const columns = [
       { key: "createdAt", title: "Date" },
       { key: "direction", title: "Direction" },
@@ -94,6 +93,8 @@ export class WalletsService {
       { key: "counterpartyWalletId", title: "Counterparty Wallet" },
       { key: "description", title: "Description" },
     ];
+
+    // convert DB rows into API-friendly format
     const rows = items.map((transaction) =>
       this.toTransactionRow(transaction, walletId),
     );
@@ -119,11 +120,16 @@ export class WalletsService {
     };
   }
 
+  // Convert a transaction into a readable row format
   private toTransactionRow(
     transaction: WalletTransaction,
     walletId: string,
   ): Record<string, string | number | Date | null> {
+
+    // check if this transaction is money going out
     const isDebit = transaction.sourceWalletId === walletId;
+
+    // figure out the other party in the transaction
     const counterpartyWalletId = isDebit
       ? transaction.destinationWalletId
       : transaction.sourceWalletId;
@@ -133,9 +139,12 @@ export class WalletsService {
       direction: isDebit ? "OUT" : "IN",
       type: transaction.type,
       amountMinorUnits: transaction.amountMinorUnits,
+
+      // negative for outgoing, positive for incoming
       balanceChangeMinorUnits: isDebit
         ? -transaction.amountMinorUnits
         : transaction.amountMinorUnits,
+
       currency: transaction.currency,
       counterpartyWalletId,
       description: transaction.description,
